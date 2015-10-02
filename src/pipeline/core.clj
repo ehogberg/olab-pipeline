@@ -13,7 +13,11 @@
    :qp (component/using
         (new-queue-processor {:queue-name "foo"
                               :handler (fn [& args] (println args))})
-        [:rmq])))
+        [:rmq])
+   :qp2 (component/using
+         (new-queue-processor {:queue-name "bar"
+                               :handler (fn [& args] (println "bar"))})
+         [:rmq])))
 
 (def ^:private system (pipeline-system))
 
@@ -28,3 +32,5 @@
   [& args]
   (log/info "Starting pipeline...")
   (start))
+
+(stop)
