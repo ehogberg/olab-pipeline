@@ -14,7 +14,8 @@
    :es (new-Elasticsearch {:uri "http://localhost:9200"})
    :auditor (component/using
              (new-auditor {:queue-name "pipeline.auditor"
-                           :exchange-name "pipeline-audit"})
+                           :exchange-name "pipeline-audit"
+                           :pool-size 25})
              [:rmq :es])
    :intake (component/using
             (new-queue-processor {:queue-name "pipeline.intake"
