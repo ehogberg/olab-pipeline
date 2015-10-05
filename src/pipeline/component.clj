@@ -10,14 +10,32 @@
             [langohr.core :as rmq]
             [langohr.queue :as q ]))
 
-(declare serialize)
+;; Helper fxns for marshaling a map/vector in RMQ wire-transportable
+;; format, and unmarshaling it back into Clojure.
+(defn deserialize [^bytes payload]
+  (-> payload
+      (String. "UTF-8")
+      (decode true)))
 
+(defn serialize [payload]
+  (-> payload
+      encode
+      (.getBytes "UTF-8")))
+
+;; Let Langohr know how to auto-magically serialize
+;; Clojure structures.
 ;;
+;; Deserialization is still
+;; the responsibility of the processing client;
+;; (make-handler-with-deserialization) is presented
+;; below as one possible approach to making this
+;; less manual.
 (extend-protocol ByteSource
   clojure.lang.PersistentArrayMap
   (to-byte-array [input] (serialize input)))
 
 
+;; Component defining a RabbitMQ service.
 (defrecord RabbitMQ [uri]
   component/Lifecycle
   (start [component]
@@ -34,6 +52,8 @@
 (defn new-channel [{:keys [connection]}]
   (ch/open connection))
 
+
+;; Define an Elasticsearch service.
 (defrecord Elasticsearch [uri]
   component/Lifecycle
   (start [component]
@@ -46,22 +66,33 @@
 
 (defn new-Elasticsearch [configs] (map->Elasticsearch configs))
 
-(defn deserialize [^bytes payload]
-  (-> payload
-      (String. "UTF-8")
-      (decode true)))
 
-(defn serialize [payload]
-  (-> payload
-      encode
-      .getBytes))
 
+;; quasi-middleware which deserializes a payload, then
+;; invokes a specified handler with it.  Returns a
+;; function suitable for use as a RMQ handler.
 (defn make-handler-with-deserialization [handler]
   (fn [ch md payload]
     (->> payload
          deserialize
          (handler ch md))))
 
+
+;;
+;; Define a generic RMQ message processor.  A minimum of two
+;; config parameters are required; a queue name to listen for
+;; messages on, and a handler function to process them once
+;; they have been received.  An optional exchange name may be
+;; specified; if defined, the queue will be bound to the named
+;; exchange, if not, it will be bound to the AMQ default exchange.
+;;
+;; This component makes a significant
+;; assumption that message payloads deserialize to JSON, and thence
+;; to Clojure maps/vectors...the supplied handler is wrapped with
+;; a deserializer using make-handler-with-deserialization.  Do not
+;; use this component if the expected message payload departs from
+;; the above assumptions; things will break badly.
+;;
 (defrecord QueueProcessor [rmq channel queue-name exchange-name handler]
   component/Lifecycle
   (start [component]
