@@ -93,21 +93,33 @@
 ;; use this component if the expected message payload departs from
 ;; the above assumptions; things will break badly.
 ;;
-(defrecord QueueProcessor [rmq channel queue-name exchange-name handler]
+(defrecord QueueProcessor [rmq channel queue-name exchange-name
+                           routing-key handler auto-ack]
   component/Lifecycle
   (start [component]
     (log/debug "New queue processor: " queue-name)
-    (let [ch (new-channel rmq)]
+    (let [ch (new-channel rmq)
+          binding-options {:routing-key routing-key}]
+
       (q/declare ch queue-name)
+
+      ;; Explicit binding is only recognized on a non-default
+      ;; exchange....don't do it, unless an exchange-name is
+      ;; specified.
       (if exchange-name
-        (q/bind ch queue-name exchange-name))
+        (q/bind ch queue-name exchange-name binding-options))
+
       (lcons/subscribe ch queue-name
                        (make-handler-with-deserialization handler)
-                       {:auto-ack true})
+                       {:auto-ack auto-ack})
+
       (assoc component :channel ch)))
   (stop [component]
     (log/debug "Closing queue processor: " queue-name)
     (ch/close channel)
     (assoc component :channel nil)))
 
-(defn new-queue-processor [config] (map->QueueProcessor config))
+(defn new-queue-processor [config] (map->QueueProcessor
+                                    (merge {:routing-key ""
+                                            :auto-ack true}
+                                           config)))

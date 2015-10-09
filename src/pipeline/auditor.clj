@@ -2,6 +2,7 @@
   (:require [clojurewerkz.elastisch.rest.document :as esrd]
             [com.climate.claypoole :as cp ]
             [com.stuartsierra.component :as component ]
+            [langohr.basic :refer [publish ]]
             [langohr.consumers :as lcons ]
             [langohr.core :as rmq ]
             [langohr.queue :as q]
@@ -31,3 +32,9 @@
     (assoc c :ch nil)))
 
 (defn new-auditor [config] (map->Auditor config))
+
+(defn write-audit-entry [ch message md payload]
+  (publish ch "pipeline-audit" ""
+           {:message message
+            :metadata md
+            :response payload}))

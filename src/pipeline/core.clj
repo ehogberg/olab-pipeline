@@ -2,11 +2,11 @@
   (:gen-class)
   (:require [clojure.tools.logging :as log]
             [com.stuartsierra.component :as component]
-            [langohr.basic :refer [publish]]
-            [pipeline.auditor :refer [new-auditor]]
-            [pipeline.component :refer [new-Rabbit new-Elasticsearch
-                                        new-queue-processor]]))
-
+            [pipeline
+             [auditor :refer [new-auditor]]
+             [component :refer [new-Elasticsearch new-queue-processor
+                                new-Rabbit]]
+             [handler :as handler]]))
 
 (defn pipeline-system []
   (component/system-map
@@ -17,12 +17,21 @@
                            :exchange-name "pipeline-audit"
                            :pool-size 25})
              [:rmq :es])
+   :capitalizer (component/using
+                 (new-queue-processor {:queue-name "pipeline.capitalizer"
+                                       :handler handler/capitalize-handler
+                                       :auto-ack true})
+                 [:rmq])
+   :global-filter (component/using
+                   (new-queue-processor {:queue-name "pipeline.global-filter"
+                                         :exchange-name "pipeline-processing"
+                                         :routing-key "global-filter"
+                                         :handler handler/dumper-handler})
+                   [:rmq])
    :intake (component/using
             (new-queue-processor {:queue-name "pipeline.intake"
                                   :exchange-name "pipeline-entry"
-                                  :handler (fn [ch _ payload]
-                                             (publish ch "pipeline-audit" ""
-                                                      payload))})
+                                  :handler handler/intake-handler})
             [:rmq])))
 
 (def ^:private system (pipeline-system))
@@ -32,6 +41,10 @@
 
 (defn stop []
   (alter-var-root #'system component/stop))
+
+(defn restart []
+  (stop)
+  (start))
 
 (defn -main [& args]
   (log/info "Starting pipeline...")
