@@ -2,37 +2,23 @@
   (:gen-class)
   (:require [clojure.tools.logging :as log]
             [com.stuartsierra.component :as component]
+            [clojure.core.async :refer [>!!]]
             [pipeline
-             [auditor :refer [new-auditor]]
-             [component :refer [new-Elasticsearch new-queue-processor
-                                new-Rabbit]]
+             [component :refer [new-Elasticsearch new-Channels
+                                new-Handlers new-DynamoDB]]
              [handler :as handler]]))
 
+
+;;
+;; Setup all the messaging queues we'll need for our pipeline.
+;;
 (defn pipeline-system []
   (component/system-map
-   :rmq (new-Rabbit {:uri nil})
+   :dynamodb (new-DynamoDB {:access-key "FOO"
+                            :secret-key "BAR"})
    :es (new-Elasticsearch {:uri "http://localhost:9200"})
-   :auditor (component/using
-             (new-auditor {:queue-name "pipeline.auditor"
-                           :exchange-name "pipeline-audit"
-                           :pool-size 25})
-             [:rmq :es])
-   :capitalizer (component/using
-                 (new-queue-processor {:queue-name "pipeline.capitalizer"
-                                       :handler handler/capitalize-handler
-                                       :auto-ack true})
-                 [:rmq])
-   :global-filter (component/using
-                   (new-queue-processor {:queue-name "pipeline.global-filter"
-                                         :exchange-name "pipeline-processing"
-                                         :routing-key "global-filter"
-                                         :handler handler/dumper-handler})
-                   [:rmq])
-   :intake (component/using
-            (new-queue-processor {:queue-name "pipeline.intake"
-                                  :exchange-name "pipeline-entry"
-                                  :handler handler/intake-handler})
-            [:rmq])))
+   :channels (component/using (new-Channels {}) [])
+   :handlers  (component/using (new-Handlers {}) [:channels])))
 
 (def ^:private system (pipeline-system))
 
@@ -46,7 +32,18 @@
   (stop)
   (start))
 
+(defn reset []
+  (stop)
+  (alter-var-root #'system (constantly (pipeline-system)))
+  (start))
+
 (defn -main [& args]
   (log/info "Starting pipeline...")
   (start)
   (log/info "Pipeline started."))
+
+(defn send-something [something]
+  (let [in (-> system
+               :handlers
+               :in)]
+    (>!! in something )))
