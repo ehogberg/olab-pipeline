@@ -10,11 +10,10 @@
                  [slf4j-logger "0.1.0-SNAPSHOT"]
                  [clojurewerkz/elastisch "2.2.0-beta4"]
                  [clj-factory "0.2.2-SNAPSHOT"]
-                 [cheshire "5.5.0"]
-                 [com.climate/claypoole "1.1.0"]
                  [clojure.joda-time "0.6.0"]
-
-                 [automat "0.2.0-alpha2"]]
+                 [org.clojure/core.async "0.1.346.0-17112a-alpha"]
+                 [org.clojure/tools.nrepl "0.2.12"]
+                 [com.taoensso/faraday "1.8.0"]]
   :plugins [[lein-autoreload "0.1.0"]]
   :main ^:skip-aot pipeline.core
   :target-path "target/%s"
