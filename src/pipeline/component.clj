@@ -1,65 +1,65 @@
 (ns pipeline.component
-  (:require [clojure.core.async :refer [chan mult tap]]
+  (:require [clojure.core.async :refer [chan close! mult tap]]
             [clojure.tools.logging :as log ]
             [clojurewerkz.elastisch.rest :as esr ]
+            [compojure.api.middleware :refer [wrap-components]]
             [com.stuartsierra.component :as component]
+            [pipeline.api :as api]
+            [pipeline.dydb :refer [write-to-checkpoint]]
             [pipeline.handler :as handler]
+            [ring.adapter.jetty :refer [run-jetty]]
             [taoensso.faraday :as far ]))
+
+(defrecord WebServer [server port]
+  component/Lifecycle
+  (start [{:keys [port] :as this}]
+    (assoc this
+           :server (run-jetty (wrap-components #'api/api-routes
+                                               (select-keys this
+                                                            [:dynamodb
+                                                             :es
+                                                             :intake-channel]))
+                              {:port port :join? false})))
+  (stop [{:keys [server] :as this}]
+    (if server
+      (.stop server))
+    (assoc this
+           :server nil)))
+
 
 ;; Dynamodb
 (defrecord DynamoDB [access-key secret-key endpoint])
 
-(defn new-DynamoDB [config]
-  (map->DynamoDB config))
 
 ;; Define an Elasticsearch service.
 (defrecord Elasticsearch [uri]
   component/Lifecycle
   (start [component]
-    (log/debug "Connecting to Elasticsearch")
+    (log/info "Connecting to Elasticsearch")
     (assoc component :connection (esr/connect uri )))
   (stop [component]
-    (log/debug "Disconnecting from Elasticsearch")
+    (log/info "Disconnecting from Elasticsearch")
     (assoc component :connection nil)))
 
-(defn new-Elasticsearch [configs] (map->Elasticsearch configs))
 
-(defn init-channels [c]
-  (assoc c
-         :pipeline-entry (chan 1000)
-         :pipeline-init  (chan 1000)
-         :global-filter  (chan 1000)
-         :pipeline-finalize (chan 1000)))
-
-(defrecord Channels [pipeline-entry pipeline-init global-filter
-                     pipeline-finalize]
+(defrecord ResponseIntake [in out]
   component/Lifecycle
-  (start [c]
-    (init-channels c))
+  (start [{:keys [in out es] :as c}]
+    (handler/processing-step [in out]
+                             (handler/auditor-entry "Intake" es))
+    c)
   (stop [c]
-    c))
+    (assoc c :in nil :out nil)))
 
-(defn new-Channels [config]
-  (map->Channels config))
 
-(defrecord Handlers [channels in]
+(defrecord DBWriter [in out]
   component/Lifecycle
-  (start [c]
-    (let [channels (:channels c)
-          finalize-mult (mult (:pipeline-finalize channels))]
-      (handler/processing-step [(:pipeline-init channels)
-                                (:global-filter channels)]
-                               handler/add-init-properties)
-      (handler/processing-step [(:global-filter channels)
-                                (:pipeline-finalize channels)]
-                               handler/add-global-filter-properties)
-      (handler/processing-step [(tap finalize-mult (chan)) nil]
-                               log/debug)
-      (handler/processing-step [(tap finalize-mult (chan)) nil]
-                               (log/debug "Written to db."))
-      (assoc c :in (:pipeline-init channels))))
+  (start [{:keys [in out dynamodb es] :as c}]
+    (let [in-mult (mult in)]
+      (handler/processing-step [(tap in-mult (chan)) nil]
+                               (handler/auditor-entry "Written to db" es))
+      (handler/processing-step [(tap in-mult (chan)) nil]
+                               log/debug))
+    c)
   (stop [c]
-    (assoc c :in nil)))
-
-(defn new-Handlers [config]
-  (map->Handlers config))
+    (assoc c :in nil :out nil :dynamodb nil)))
