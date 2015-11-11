@@ -14,9 +14,12 @@
                  [com.taoensso/faraday "1.8.0"]
                  [metosin/compojure-api "0.23.1"]
                  [prismatic/schema "1.0.3"]
-                 [metosin/schema-tools "0.6.2"]]
+                 [metosin/schema-tools "0.6.2"]
+                 [honeysql "0.6.2"]
+                 [org.clojure/java.jdbc "0.4.2"]
+                 [org.postgresql/postgresql "9.4-1201-jdbc41"]]
   :plugins [[lein-autoreload "0.1.0"]]
   :main ^:skip-aot pipeline.core
   :target-path "target/%s"
-  :jvm-opts ["-Dlog4j.configuration=pipeline.log4j.properties" "-Dlog4j.debug"]
+  :jvm-opts ["-Dlog4j.configuration=pipeline.log4j.properties"]
   :profiles {:uberjar {:aot :all}})

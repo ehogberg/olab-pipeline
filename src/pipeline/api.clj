@@ -3,18 +3,22 @@
             [compojure.api.sweet :refer :all]
             [pipeline.auditor :refer [purge-audit-table audit-trail]]
             [pipeline.dydb :as dydb]
+            [pipeline.postgres :as postgres]
             [pipeline.handler :as handler]
             [ring.util.http-response :refer :all]
-            [schema.core :refer [defschema maybe] ]))
+            [schema.core :refer [defschema] :as s ]))
 
-(defschema Response {:id String
-                     :tx-id String
-                     :response-id String
-                     :added-at java.util.Date
+
+(defschema Response {:id s/Uuid
+                     :created_at java.util.Date
+                     :company_id Number
                      :comment String})
-(defschema NewResponse (dissoc Response :response-id :tx-id :id :added-at))
-
-
+(defschema NewResponse (dissoc Response :id :created_at :company_id))
+(defschema Checkpoint {:id s/Uuid
+                       :response {:response-id s/Uuid
+                                  :resp-tx-id s/Uuid
+                                  :comment String
+                                  :added-at java.util.Date}})
 
 (defroutes* audit-routes
   (context* "/audit" []
@@ -33,6 +37,7 @@
             :tags ["Checkpoint"]
             :components [dynamodb]
             (GET* "/pending" []
+                  :return [Checkpoint]
                   :summary "Lists all responses awaiting pipeline processing."
                   (ok (dydb/get-checkpoints dynamodb)))
             (POST* "/purge" []
@@ -44,21 +49,27 @@
 
 (defroutes* response-routes
   (context* "/response" []
-    :tags ["Responses"]
-    (GET* "/:resp-id" []
-          :path-params [resp-id :- String]
-          :return Response
-          :components [dynamodb]
-          :summary "Returns details about a response."
-          (ok "Get response"))
-    (POST* "/process" []
-           :body [resp (describe NewResponse "New response")]
-           :components [dynamodb intake-channel]
-           :summary "Submits a response for pipeline processing"
-           (let [new-resp (handler/add-init-properties resp)]
-             (dydb/write-to-checkpoint new-resp dynamodb)
-             (>!! intake-channel new-resp)
-             (ok new-resp)))))
+            :tags ["Responses"]
+            (GET* "/all" []
+                  :components [postgres]
+                  (ok (postgres/all-responses postgres)))
+            (GET* "/:resp-id" []
+                  :path-params [resp-id :- s/Uuid]
+                  :components [postgres]
+                  :return Response
+                  :summary "Returns details about a response."
+                  (ok (postgres/get-response postgres resp-id)))
+            (POST* "/purge" []
+                   :components [postgres]
+                   (ok (postgres/purge-tables postgres)))
+            (POST* "/process" []
+                   :body [resp (describe NewResponse "New response")]
+                   :components [dynamodb intake-channel]
+                   :summary "Submits a response for pipeline processing"
+                   (let [new-resp (handler/add-init-properties resp)]
+                     (dydb/write-to-checkpoint new-resp dynamodb)
+                     (>!! intake-channel new-resp)
+                     (ok new-resp)))))
 
 (defapi api-routes
  (swagger-ui)

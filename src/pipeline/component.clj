@@ -7,22 +7,26 @@
             [pipeline.api :as api]
             [pipeline.dydb :refer [write-to-checkpoint]]
             [pipeline.handler :as handler]
-            [ring.adapter.jetty :refer [run-jetty]]
-            [taoensso.faraday :as far ]))
+            [pipeline.postgres :as postgres ]
+            [ring.adapter.jetty :refer [run-jetty]]))
 
 (defrecord WebServer [server port]
   component/Lifecycle
   (start [{:keys [port] :as this}]
+    (log/info "Starting Jetty...")
     (assoc this
            :server (run-jetty (wrap-components #'api/api-routes
                                                (select-keys this
                                                             [:dynamodb
                                                              :es
+                                                             :postgres
                                                              :intake-channel]))
                               {:port port :join? false})))
   (stop [{:keys [server] :as this}]
     (if server
-      (.stop server))
+      (do
+        (log/info "Shutting down Jetty...")
+        (.stop server)))
     (assoc this
            :server nil)))
 
@@ -51,13 +55,22 @@
   (stop [c]
     (assoc c :in nil :out nil)))
 
+(defrecord GlobalProcessing [in out]
+  component/Lifecycle
+  (start [{:keys [in out] :as c}]
+    (handler/processing-step [in out]
+                             (handler/add-company-id))
+    c)
+  (stop [c] (assoc c :in nil :out nil)))
 
 (defrecord DBWriter [in out]
   component/Lifecycle
-  (start [{:keys [in out dynamodb es] :as c}]
+  (start [{:keys [in out postgres es] :as c}]
     (let [in-mult (mult in)]
       (handler/processing-step [(tap in-mult (chan)) nil]
-                               (handler/auditor-entry "Written to db" es))
+                               (handler/auditor-entry "Writing to db" es))
+      (handler/processing-step [(tap in-mult (chan) nil)]
+                               (postgres/create-response postgres))
       (handler/processing-step [(tap in-mult (chan)) nil]
                                log/debug))
     c)
